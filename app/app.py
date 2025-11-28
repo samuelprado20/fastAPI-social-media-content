@@ -1,9 +1,9 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, File, UploadFile, Form, Depends
 from app.schemas import PostCreate, PostResponse
 from app.db import Post, create_db_and_tables, get_async_session
 from sqlalchemy.ext.asyncio import AsyncSession
 from contextlib import asynccontextmanager
-
+from sqlalchemy import select
 
 
 @asynccontextmanager
@@ -14,38 +14,41 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-@app.get("/")
-async def root():
-  return {"message": "Hello World!"}
+@app.post("/upload")
+async def upload_file(
+  file: UploadFile = File(...), #To receive a File object to this endpoint
+  caption: str = Form(""),
+  session: AsyncSession = Depends(get_async_session) #Dependency injection
+):
+  post = Post(
+    caption=caption,
+    url="dummy url",
+    file_type="photo",
+    file_name="dummy name"
+  )
+  
+  session.add(post)
+  await session.commit()
+  await session.refresh(post)
 
-text_posts = {
-  1: {"title": "Exploring the Wilderness", "content": "Had an amazing time hiking in the mountains this weekend! The views were incredible. Check out this photo of the sunrise! #WildernessAdventure #NatureLover"},
-  2: {"title": "Cooking My Favorite Dish", "content": "Tried cooking lasagna from scratch today! It turned out delicious, but a bit messy. Here's the video of me layering it up. #Foodie #HomeCooking"},
-  3: {"title": "Sunset at the Beach", "content": "Nothing beats a sunset by the beach. So peaceful and calming. Take a look at the video of the waves crashing at sunset! #BeachVibes #SunsetLover"},
-  4: {"title": "My New Artwork", "content": "Just finished a new painting of a cityscape. It’s my biggest piece yet! Here's a pic of it before I framed it. #Art #CreativeProcess"},
-  5: {"title": "Yoga in the Park", "content": "Had a peaceful yoga session this morning in the park. The weather was perfect! Here’s a quick video of me doing some sun salutations. #YogaLife #MorningVibes"},
-  6: {"title": "Road Trip Adventures", "content": "Started a cross-country road trip today! First stop: a quirky little diner in the middle of nowhere. Here's a picture of the place! #RoadTrip #TravelGoals"},
-  7: {"title": "Rock Climbing Challenge", "content": "Just completed my first rock climbing course! It was tough but so rewarding. Here’s a video of me making it to the top! #ClimbingLife #ChallengeAccepted"},
-  8: {"title": "Concert Night", "content": "Went to a live concert last night. The band was amazing! Check out this short clip of their performance. #LiveMusic #ConcertVibes"},
-  9: {"title": "New Book Recommendation", "content": "Just finished reading this incredible book about space exploration. Highly recommend it to anyone interested in the stars. Here’s a photo of the cover. #Bookworm #SpaceScience"},
-  10: {"title": "Baking a Cake", "content": "Baked my first ever chocolate cake today! It’s not perfect, but it tastes amazing. Here’s a quick video of me frosting it! #Baking #SweetTreats" }
-}
+  return post
 
-@app.get("/posts")
-def get_all_posts(limit: int = None):
-  if limit:
-    return list(text_posts.values())[:limit]
-  return text_posts
+@app.get("/feed")
+async def get_feed(
+  session: AsyncSession = Depends(get_async_session)
+):
+  result = await session.execute(select(Post).order_by(Post.created_at.desc()))
+  posts = [row[0] for row in result.all()]
 
-@app.get("/posts/{id}")
-def get_post(id: int) -> PostResponse:
-  if id not in text_posts:
-    raise HTTPException(status_code=404, detail="Post not found")
-  return text_posts.get(id)
+  posts_data = []
+  for post in posts:
+    posts_data.append({
+      "id": str(post.id),
+      "caption": post.caption,
+      "url": post.url,
+      "file_type": post.file_type,
+      "file_name": post.file_name,
+      "created_at": post.created_at.isoformat()
+    })
 
-@app.post("/posts")
-def create_post(post: PostCreate) -> PostResponse:
-  new_post = {"title": post.title, "content": post.content}
-  text_posts[max(text_posts.keys()) + 1] = new_post
-
-  return new_post
+  return {"posts": posts_data}
